@@ -104,9 +104,9 @@
 
 <div id="pipSheet" hidden>
   <div class="sheet">
-    <p>小窓で見る配信を選んでください</p>
+    <p>YouTubeアプリで開く配信を選んでください</p>
     <div id="pipList"></div>
-    <p class="hint">選んだ配信が全画面になります。そのままホームに戻ると小窓（PiP）になります。</p>
+    <p class="hint">YouTubeアプリで開いたあと、ホームに戻ると小窓になります。こちらの画面ではその配信をミュートにします（ほかの配信は止まることがあります）。</p>
     <button id="pipCancel">キャンセル</button>
   </div>
 </div>
@@ -263,12 +263,13 @@ $('pipCancel').onclick = () => { $('pipSheet').hidden = true; };
 $('pipSheet').onclick = e => { if(e.target.id === 'pipSheet') $('pipSheet').hidden = true; };
 
 function pipTo(p){
-  const f = p.player.getIframe();
-  const req = f.requestFullscreen ? f.requestFullscreen() : Promise.reject();
+  // 選んだ配信を YouTube アプリで開く（アプリ側の小窓・Premium を使う）
   $('pipSheet').hidden = true;
-  setMuted(p, false); soloIdx = -1; syncUi();
-  req.then(() => { try{ screen.orientation.lock('landscape').catch(()=>{}); }catch(e){} })
-     .catch(() => alert('全画面にできませんでした。プレーヤー右下の全画面ボタンをお試しください。'));
+  setMuted(p, true); soloIdx = -1; syncUi();   // 二重に音が出ないよう、こちら側はミュート
+  const watch = 'https://www.youtube.com/watch?v=' + p.id;
+  location.href = 'intent://www.youtube.com/watch?v=' + p.id +
+    '#Intent;scheme=https;package=com.google.android.youtube;S.browser_fallback_url=' +
+    encodeURIComponent(watch) + ';end';
 }
 document.addEventListener('fullscreenchange', () => {
   if(!document.fullscreenElement){ try{ screen.orientation.unlock(); }catch(e){} }
