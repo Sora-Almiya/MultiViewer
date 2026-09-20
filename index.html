@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#16181f">
+<title>マルチ配信ビューア</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#16181f; --panel:#20232d; --line:#323644; --text:#e9eaf0; --sub:#8d91a3;
+    --c1:#ff6f91; --c2:#3ec9c1; --c3:#f5b642;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+    font-family:"Zen Kaku Gothic New",system-ui,"Noto Sans JP",sans-serif}
+  body{display:flex;flex-direction:column;
+    padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
+  button{font:inherit;font-size:13px;color:var(--text);background:var(--panel);
+    border:1px solid var(--line);border-radius:10px;padding:7px 11px;cursor:pointer}
+  button:focus-visible,input:focus-visible{outline:2px solid var(--c2);outline-offset:1px}
+  button.on{background:var(--text);color:var(--bg);border-color:var(--text)}
+
+  header{display:flex;gap:6px;align-items:center;padding:6px 8px;flex-wrap:wrap}
+  header h1{font-size:15px;margin:0 auto 0 2px;font-weight:700}
+
+  #setup{padding:4px 8px 10px;display:grid;gap:8px}
+  #setup label{display:grid;grid-template-columns:6px 1fr;gap:8px;align-items:stretch}
+  #setup label span{border-radius:3px}
+  #setup input{width:100%;padding:10px;border-radius:10px;border:1px solid var(--line);
+    background:#0d0e13;color:var(--text);font-size:14px}
+  #setup .row{display:flex;gap:8px}
+  #setup .row button{flex:1;padding:10px}
+  #start{background:var(--c2);color:#062523;border-color:var(--c2);font-weight:700}
+  #msg{color:var(--c3);font-size:12px;min-height:1em;margin:0}
+  .hint{color:var(--sub);font-size:12px;margin:0;line-height:1.6}
+
+  #grid{flex:1;min-height:0;display:grid;gap:5px;padding:0 5px 5px;grid-template-columns:1fr}
+  #grid[data-n="1"]{grid-template-rows:1fr}
+  #grid[data-n="2"]{grid-template-rows:repeat(2,1fr)}
+  #grid[data-n="3"]{grid-template-rows:repeat(3,1fr)}
+  @media (orientation:landscape){
+    #grid[data-n="2"]{grid-template-columns:repeat(2,1fr);grid-template-rows:1fr}
+    #grid[data-n="3"]{grid-template-columns:repeat(3,1fr);grid-template-rows:1fr}
+  }
+  .cell{display:flex;flex-direction:column;min-height:0;background:#000;border-radius:8px;
+    overflow:hidden;border-top:3px solid var(--c)}
+  .vid{flex:1;position:relative;min-height:0}
+  .vid iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+  .bar{display:flex;align-items:center;gap:6px;padding:4px 6px;background:var(--panel)}
+  .bar button{padding:4px 9px;font-size:12px}
+  .bar button.mute{min-width:40px}
+  .bar button.solo.on{background:var(--c);border-color:var(--c);color:#111}
+  .bar input[type=range]{flex:1;accent-color:var(--c);min-width:0}
+  .muted .bar input[type=range]{opacity:.35}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<header>
+  <h1>マルチ配信ビューア</h1>
+  <button id="playAll" hidden>▶ 全部再生</button>
+  <button id="pauseAll" hidden>⏸ 全部停止</button>
+  <button id="wake" title="再生中に画面が消えないようにする">画面ON</button>
+  <button id="fs">全画面</button>
+  <button id="toggleSetup" hidden>URL設定</button>
+</header>
+
+<section id="setup">
+  <label><span style="background:var(--c1)"></span><input id="u0" inputmode="url" placeholder="配信1のURL（youtube.com/live/… など）"></label>
+  <label><span style="background:var(--c2)"></span><input id="u1" inputmode="url" placeholder="配信2のURL"></label>
+  <label><span style="background:var(--c3)"></span><input id="u2" inputmode="url" placeholder="配信3のURL（空欄なら2画面）"></label>
+  <div class="row">
+    <button id="clear">入力をクリア</button>
+    <button id="start">視聴を開始</button>
+  </div>
+  <p id="msg"></p>
+  <p class="hint">配信ページのURLをそのまま貼り付けてください。チャンネルページのURLでは開けません。<br>
+  音が出ない配信は、下のバーの🔇をタップすると鳴ります。</p>
+</section>
+
+<main id="grid" data-n="0"></main>
+
+<script>
+const COLORS = ['var(--c1)','var(--c2)','var(--c3)'];
+const $ = id => document.getElementById(id);
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+};
+
+let players = [];
+let vols = store.get('mv_vols', [80,80,80]);
+let soloIdx = -1;
+
+// 保存済みURLを復元
+store.get('mv_urls', ['','','']).forEach((u,i)=>{ $('u'+i).value = u || ''; });
+
+function parseId(s){
+  s = (s||'').trim();
+  if(!s) return null;
+  if(/^[\w-]{11}$/.test(s)) return s;
+  try{
+    const u = new URL(s);
+    if(u.hostname.includes('youtu.be')) return u.pathname.slice(1,12);
+    const v = u.searchParams.get('v'); if(v) return v.slice(0,11);
+    const m = u.pathname.match(/\/(live|shorts|embed)\/([\w-]{11})/);
+    if(m) return m[2];
+  }catch(e){}
+  return null;
+}
+
+// YouTube IFrame API を読み込む
+let apiPromise = null;
+function loadApi(){
+  if(apiPromise) return apiPromise;
+  apiPromise = new Promise((resolve, reject)=>{
+    if(window.YT && YT.Player) return resolve();
+    window.onYouTubeIframeAPIReady = resolve;
+    const s = document.createElement('script');
+    s.src = 'https://www.youtube.com/iframe_api';
+    s.onerror = () => reject(new Error('api'));
+    document.head.appendChild(s);
+  });
+  return apiPromise;
+}
+
+async function start(){
+  const raw = [0,1,2].map(i => $('u'+i).value.trim());
+  const bad = raw.map((r,i)=> r && !parseId(r) ? (i+1) : null).filter(Boolean);
+  const items = raw.map((r,i)=>({slot:i, id:parseId(r)})).filter(x=>x.id);
+  if(bad.length){ $('msg').textContent = `配信${bad.join('・')}のURLを読み取れません。配信ページのURLを貼り付けてください。`; return; }
+  if(!items.length){ $('msg').textContent = 'URLを1つ以上入力してください。'; return; }
+  $('msg').textContent = '';
+  store.set('mv_urls', raw);
+
+  try{ await loadApi(); }
+  catch(e){ $('msg').textContent = 'YouTubeの読み込みに失敗しました。通信状態を確認して再度お試しください。'; return; }
+
+  players.forEach(p=>{ try{ p.player.destroy(); }catch(e){} });
+  players = []; soloIdx = -1;
+  const grid = $('grid');
+  grid.innerHTML = '';
+  grid.dataset.n = items.length;
+
+  items.forEach((it, k)=>{
+    const cell = document.createElement('div');
+    cell.className = 'cell';
+    cell.style.setProperty('--c', COLORS[it.slot]);
+    cell.innerHTML = `
+      <div class="vid"><div id="p${it.slot}"></div></div>
+      <div class="bar">
+        <button class="mute" aria-label="ミュート切替">🔊</button>
+        <input type="range" min="0" max="100" value="${vols[it.slot]}" aria-label="音量">
+        <button class="solo">ソロ</button>
+        <button class="reload" aria-label="読み込み直す">⟳</button>
+      </div>`;
+    grid.appendChild(cell);
+
+    const entry = {slot:it.slot, id:it.id, cell, muted:false, player:null};
+    entry.player = new YT.Player('p'+it.slot, {
+      videoId: it.id,
+      playerVars: {autoplay:1, playsinline:1, rel:0},
+      events: {
+        onReady: e => { e.target.setVolume(vols[it.slot]); e.target.unMute(); e.target.playVideo(); syncUi(); }
+      }
+    });
+    players.push(entry);
+
+    const q = sel => cell.querySelector(sel);
+    q('.mute').onclick = () => { setMuted(entry, !entry.muted); soloIdx = -1; syncUi(); };
+    q('input').oninput = ev => {
+      const v = +ev.target.value; vols[it.slot] = v; store.set('mv_vols', vols);
+      try{ entry.player.setVolume(v); if(entry.muted && v>0) setMuted(entry,false); }catch(e){}
+      syncUi();
+    };
+    q('.solo').onclick = () => {
+      soloIdx = (soloIdx === k) ? -1 : k;
+      players.forEach((p,j)=> setMuted(p, soloIdx !== -1 && j !== soloIdx));
+      syncUi();
+    };
+    q('.reload').onclick = () => { try{ entry.player.loadVideoById(entry.id); }catch(e){} };
+  });
+
+  $('setup').hidden = true;
+  ['playAll','pauseAll','toggleSetup'].forEach(id => $(id).hidden = false);
+}
+
+function setMuted(p, m){
+  p.muted = m;
+  try{ m ? p.player.mute() : (p.player.unMute(), p.player.playVideo()); }catch(e){}
+}
+
+function syncUi(){
+  players.forEach((p,j)=>{
+    p.cell.classList.toggle('muted', p.muted);
+    p.cell.querySelector('.mute').textContent = p.muted ? '🔇' : '🔊';
+    p.cell.querySelector('.solo').classList.toggle('on', soloIdx === j);
+  });
+}
+
+$('start').onclick = start;
+$('clear').onclick = () => { [0,1,2].forEach(i => $('u'+i).value=''); store.set('mv_urls',['','','']); };
+$('toggleSetup').onclick = () => { $('setup').hidden = !$('setup').hidden; };
+$('playAll').onclick = () => players.forEach(p => { try{ if(!p.muted) p.player.unMute(); p.player.playVideo(); }catch(e){} });
+$('pauseAll').onclick = () => players.forEach(p => { try{ p.player.pauseVideo(); }catch(e){} });
+
+$('fs').onclick = async () => {
+  try{
+    if(document.fullscreenElement) await document.exitFullscreen();
+    else await document.documentElement.requestFullscreen();
+  }catch(e){}
+};
+
+// 画面ON維持（Wake Lock）
+let lock = null, wantLock = false;
+async function acquire(){
+  try{ lock = await navigator.wakeLock.request('screen'); lock.addEventListener('release', ()=>{ lock = null; }); }
+  catch(e){ wantLock = false; $('wake').classList.remove('on'); }
+}
+$('wake').onclick = async () => {
+  if(!('wakeLock' in navigator)){ $('wake').disabled = true; return; }
+  wantLock = !wantLock;
+  $('wake').classList.toggle('on', wantLock);
+  if(wantLock) await acquire(); else if(lock){ lock.release(); lock = null; }
+};
+document.addEventListener('visibilitychange', () => {
+  if(wantLock && document.visibilityState === 'visible' && !lock) acquire();
+});
+</script>
+</body>
+</html>
