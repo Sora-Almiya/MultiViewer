@@ -53,7 +53,12 @@
   .bar button{padding:4px 9px;font-size:12px}
   .bar button.mute{min-width:40px}
   .bar button.solo.on{background:var(--c);border-color:var(--c);color:#111}
-  .bar input[type=range]{flex:1;accent-color:var(--c);min-width:0}
+  .bar input[type=range]{display:none;flex:1;accent-color:var(--c);min-width:0}
+  .cell.showvol .bar input[type=range]{display:block}
+  .bar .vol{min-width:52px;font-variant-numeric:tabular-nums}
+  .cell.showvol .bar .vol{background:var(--c);border-color:var(--c);color:#111}
+  .bar .solo{margin-left:auto}
+  .cell.showvol .bar .solo{margin-left:0}
   .muted .bar input[type=range]{opacity:.35}
   [hidden]{display:none!important}
 </style>
@@ -153,6 +158,7 @@ async function start(){
       <div class="vid"><div id="p${it.slot}"></div></div>
       <div class="bar">
         <button class="mute" aria-label="ミュート切替">🔊</button>
+        <button class="vol" aria-label="音量バーを表示">🎚 ${vols[it.slot]}</button>
         <input type="range" min="0" max="100" value="${vols[it.slot]}" aria-label="音量">
         <button class="solo">ソロ</button>
         <button class="reload" aria-label="読み込み直す">⟳</button>
@@ -173,9 +179,11 @@ async function start(){
     q('.mute').onclick = () => { setMuted(entry, !entry.muted); soloIdx = -1; syncUi(); };
     q('input').oninput = ev => {
       const v = +ev.target.value; vols[it.slot] = v; store.set('mv_vols', vols);
+      q('.vol').textContent = '🎚 ' + v;
       try{ entry.player.setVolume(v); if(entry.muted && v>0) setMuted(entry,false); }catch(e){}
       syncUi();
     };
+    q('.vol').onclick = () => { cell.classList.toggle('showvol'); };
     q('.solo').onclick = () => {
       soloIdx = (soloIdx === k) ? -1 : k;
       players.forEach((p,j)=> setMuted(p, soloIdx !== -1 && j !== soloIdx));
