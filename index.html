@@ -33,8 +33,16 @@
   body.viewing header button{flex:1;padding:5px 2px}
 
   #setup{padding:4px 8px 10px;display:grid;gap:8px}
-  #setup label{display:grid;grid-template-columns:6px 1fr;gap:8px;align-items:stretch}
-  #setup label span{border-radius:3px}
+  .urlrow{display:grid;grid-template-columns:10px 1fr;gap:8px;align-items:stretch;
+    position:relative;transition:transform .15s}
+  .urlrow.dragging{transition:none;z-index:2}
+  .urlrow.dragging input{border-color:var(--blue)}
+  .grip{position:relative;border-radius:5px;background:var(--c);touch-action:none;cursor:grab;
+    display:grid;place-items:center}
+  .grip::after{content:"";position:absolute;inset:-4px -8px -4px -6px}  /* 見た目は細く、触れる範囲は広く */
+  .grip::before{content:"";width:6px;height:10px;opacity:.5;
+    background:repeating-linear-gradient(#16181f 0 2px,transparent 2px 4px)}
+  .urlrow.dragging .grip{cursor:grabbing}
   #setup input{width:100%;padding:10px;border-radius:10px;border:1px solid var(--line);
     background:#0d0e13;color:var(--text);font-size:14px}
   #setup .row{display:flex;gap:8px}
@@ -66,13 +74,10 @@
   .bar .solo{margin-left:auto}
   .cell.showvol .bar .solo{margin-left:0}
   .muted .bar input[type=range]{opacity:.35}
-  #pipSheet{position:fixed;inset:0;z-index:10;background:rgba(0,0,0,.55);display:flex;align-items:flex-end}
-  .sheet{width:100%;background:var(--panel);border-radius:14px 14px 0 0;display:grid;gap:8px;
-    padding:14px 12px calc(14px + env(safe-area-inset-bottom,0px))}
-  .sheet p{margin:0;font-size:14px}
-  #pipList{display:grid;gap:8px}
-  #pipList button{padding:12px;font-weight:700;text-align:left;background:var(--c);border-color:var(--c);
-    color:#16181f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* Kotlin版の小窓（PiP）表示中は映像だけにする */
+  body.pip header, body.pip #setup, body.pip .bar{display:none!important}
+  body.pip #grid{gap:0;padding:0}
+  body.pip .cell{border-radius:0;border-top-width:0}
   [hidden]{display:none!important}
 </style>
 </head>
@@ -81,35 +86,29 @@
   <h1>マルチ配信ビューア</h1>
   <button id="playAll" hidden>▶ 全部</button>
   <button id="pauseAll" hidden>⏸ 全部</button>
-  <button id="pip" hidden>PiP</button>
   <button id="wake" title="再生中に画面が消えないようにする">画面ON</button>
   <button id="fs">全画面</button>
   <button id="toggleSetup" hidden>URL</button>
 </header>
 
 <section id="setup">
-  <label><span style="background:var(--c1)"></span><input id="u0" inputmode="url" placeholder="配信1のURL（youtube.com/live/… など）"></label>
-  <label><span style="background:var(--c2)"></span><input id="u1" inputmode="url" placeholder="配信2のURL"></label>
-  <label><span style="background:var(--c3)"></span><input id="u2" inputmode="url" placeholder="配信3のURL（空欄なら2画面）"></label>
+  <div id="urlRows" style="display:grid;gap:8px">
+    <div class="urlrow" style="--c:var(--c1)"><span class="grip" aria-hidden="true"></span><input id="u0" inputmode="url" aria-label="配信1のURL" placeholder="配信1のURL（youtube.com/live/… など）"></div>
+    <div class="urlrow" style="--c:var(--c2)"><span class="grip" aria-hidden="true"></span><input id="u1" inputmode="url" aria-label="配信2のURL" placeholder="配信2のURL"></div>
+    <div class="urlrow" style="--c:var(--c3)"><span class="grip" aria-hidden="true"></span><input id="u2" inputmode="url" aria-label="配信3のURL" placeholder="配信3のURL（空欄なら2画面）"></div>
+  </div>
   <div class="row">
     <button id="clear">入力をクリア</button>
     <button id="start">視聴を開始</button>
   </div>
   <p id="msg"></p>
-  <p class="hint">配信ページのURLをそのまま貼り付けてください。チャンネルページのURLでは開けません。<br>
+  <p class="hint">左端の色の部分をドラッグすると、表示順を並び替えられます（上から順に表示）。<br>
+  配信ページのURLをそのまま貼り付けてください。チャンネルページのURLでは開けません。<br>
   音が出ない配信は、下のバーの🔇をタップすると鳴ります。</p>
 </section>
 
 <main id="grid" data-n="0"></main>
 
-<div id="pipSheet" hidden>
-  <div class="sheet">
-    <p>YouTubeアプリで開く配信を選んでください</p>
-    <div id="pipList"></div>
-    <p class="hint">YouTubeアプリで開いたあと、ホームに戻ると小窓になります。こちらの画面ではその配信をミュートにします（ほかの配信は止まることがあります）。</p>
-    <button id="pipCancel">キャンセル</button>
-  </div>
-</div>
 
 <script>
 const COLORS = ['var(--c1)','var(--c2)','var(--c3)'];
@@ -156,6 +155,7 @@ function loadApi(){
 }
 
 async function start(){
+  $('msg').style.color = '';
   const raw = [0,1,2].map(i => $('u'+i).value.trim());
   const bad = raw.map((r,i)=> r && !parseId(r) ? (i+1) : null).filter(Boolean);
   const items = raw.map((r,i)=>({slot:i, id:parseId(r)})).filter(x=>x.id);
@@ -216,8 +216,10 @@ async function start(){
   });
 
   $('setup').hidden = true;
-  ['playAll','pauseAll','pip','toggleSetup'].forEach(id => $(id).hidden = false);
+  ['playAll','pauseAll','toggleSetup'].forEach(id => $(id).hidden = false);
   document.body.classList.add('viewing');
+  // Kotlin版アプリに配信数を伝える（Web版では何もしない）
+  try{ if(window.Android) Android.setCount(items.length); }catch(e){}
 }
 
 function setMuted(p, m){
@@ -246,34 +248,53 @@ $('fs').onclick = async () => {
   }catch(e){}
 };
 
-// PiP：選んだ配信を全画面にする（ホームに戻ると Chrome が小窓にする）
-$('pip').onclick = () => {
-  const list = $('pipList'); list.innerHTML = '';
-  players.forEach(p => {
-    const b = document.createElement('button');
-    b.style.setProperty('--c', COLORS[p.slot]);
-    let t = ''; try{ t = p.player.getVideoData().title || ''; }catch(e){}
-    b.textContent = `配信${p.slot+1}` + (t ? `：${t}` : '');
-    b.onclick = () => pipTo(p);
-    list.appendChild(b);
+// URL欄の並び替え（左端の色の部分をドラッグ）
+(() => {
+  const rows = [...document.querySelectorAll('.urlrow')];
+  const GAP = 8;
+  let drag = null;
+  rows.forEach((row, idx) => {
+    const grip = row.querySelector('.grip');
+    grip.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      grip.setPointerCapture(e.pointerId);
+      drag = { idx, row, startY: e.clientY, step: row.offsetHeight + GAP, target: idx };
+      row.classList.add('dragging');
+    });
+    grip.addEventListener('pointermove', e => {
+      if(!drag || drag.row !== row) return;
+      const dy = e.clientY - drag.startY;
+      const min = -drag.idx * drag.step, max = (rows.length - 1 - drag.idx) * drag.step;
+      const y = Math.max(min, Math.min(max, dy));
+      row.style.transform = `translateY(${y}px)`;
+      drag.target = Math.max(0, Math.min(rows.length - 1, drag.idx + Math.round(y / drag.step)));
+      rows.forEach((r, j) => {
+        if(j === drag.idx) return;
+        let shift = 0;
+        if(drag.target > drag.idx && j > drag.idx && j <= drag.target) shift = -drag.step;
+        if(drag.target < drag.idx && j < drag.idx && j >= drag.target) shift = drag.step;
+        r.style.transform = shift ? `translateY(${shift}px)` : '';
+      });
+    });
+    const end = () => {
+      if(!drag || drag.row !== row) return;
+      const {idx: from, target: to} = drag;
+      drag = null;
+      rows.forEach(r => { r.style.transform = ''; r.classList.remove('dragging'); });
+      if(from === to) return;
+      // 入力値と音量を新しい順番に入れ替える（色は位置で固定）
+      const order = [0,1,2]; order.splice(to, 0, order.splice(from, 1)[0]);
+      const urls = [0,1,2].map(i => $('u'+i).value);
+      order.forEach((src, pos) => { $('u'+pos).value = urls[src]; });
+      vols = order.map(src => vols[src]);
+      store.set('mv_urls', [0,1,2].map(i => $('u'+i).value));
+      store.set('mv_vols', vols);
+      if(document.body.classList.contains('viewing')) $('msg').style.color = 'var(--blue)'; $('msg').textContent = '並び替えました。「視聴を開始」で反映されます。';
+    };
+    grip.addEventListener('pointerup', end);
+    grip.addEventListener('pointercancel', end);
   });
-  $('pipSheet').hidden = false;
-};
-$('pipCancel').onclick = () => { $('pipSheet').hidden = true; };
-$('pipSheet').onclick = e => { if(e.target.id === 'pipSheet') $('pipSheet').hidden = true; };
-
-function pipTo(p){
-  // 選んだ配信を YouTube アプリで開く（アプリ側の小窓・Premium を使う）
-  $('pipSheet').hidden = true;
-  setMuted(p, true); soloIdx = -1; syncUi();   // 二重に音が出ないよう、こちら側はミュート
-  const watch = 'https://www.youtube.com/watch?v=' + p.id;
-  location.href = 'intent://www.youtube.com/watch?v=' + p.id +
-    '#Intent;scheme=https;package=com.google.android.youtube;S.browser_fallback_url=' +
-    encodeURIComponent(watch) + ';end';
-}
-document.addEventListener('fullscreenchange', () => {
-  if(!document.fullscreenElement){ try{ screen.orientation.unlock(); }catch(e){} }
-});
+})();
 
 // 画面ON維持（Wake Lock）
 let lock = null, wantLock = false;
