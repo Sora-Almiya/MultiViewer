@@ -26,8 +26,11 @@
   button:focus-visible,input:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
   button.on{background:var(--yellow);color:#16181f;border-color:var(--yellow)}
 
-  header{display:flex;gap:6px;align-items:center;padding:6px 8px;flex-wrap:wrap}
-  header h1{font-size:15px;margin:0 auto 0 2px;font-weight:700}
+  header{display:flex;gap:4px;align-items:center;padding:4px 4px}
+  header h1{font-size:15px;margin:0 auto 0 4px;font-weight:700}
+  header button{font-size:12px;padding:5px 8px;border-radius:8px;white-space:nowrap}
+  body.viewing header h1{display:none}
+  body.viewing header button{flex:1;padding:5px 2px}
 
   #setup{padding:4px 8px 10px;display:grid;gap:8px}
   #setup label{display:grid;grid-template-columns:6px 1fr;gap:8px;align-items:stretch}
@@ -40,7 +43,7 @@
   #msg{color:var(--pink);font-size:12px;min-height:1em;margin:0}
   .hint{color:var(--sub);font-size:12px;margin:0;line-height:1.6}
 
-  #grid{flex:1;min-height:0;display:grid;gap:5px;padding:0 5px 5px;grid-template-columns:1fr}
+  #grid{flex:1;min-height:0;display:grid;gap:3px;padding:0 3px 3px;grid-template-columns:1fr}
   #grid[data-n="1"]{grid-template-rows:1fr}
   #grid[data-n="2"]{grid-template-rows:repeat(2,1fr)}
   #grid[data-n="3"]{grid-template-rows:repeat(3,1fr)}
@@ -48,32 +51,40 @@
     #grid[data-n="2"]{grid-template-columns:repeat(2,1fr);grid-template-rows:1fr}
     #grid[data-n="3"]{grid-template-columns:repeat(3,1fr);grid-template-rows:1fr}
   }
-  .cell{display:flex;flex-direction:column;min-height:0;background:#000;border-radius:8px;
-    overflow:hidden;border-top:3px solid var(--c)}
+  .cell{display:flex;flex-direction:column;min-height:0;background:#000;border-radius:6px;
+    overflow:hidden;border-top:2px solid var(--c)}
   .vid{flex:1;position:relative;min-height:0}
   .vid iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
-  .bar{display:flex;align-items:center;gap:6px;padding:4px 6px;background:var(--panel)}
-  .bar button{padding:4px 9px;font-size:12px}
-  .bar button.mute{min-width:40px}
+  .bar{display:flex;align-items:center;gap:4px;padding:2px 3px;background:var(--panel)}
+  .bar button{padding:1px 8px;font-size:12px;line-height:1.35;border-radius:7px}
+  .bar button.mute{min-width:34px}
   .bar button.solo.on{background:var(--c);border-color:var(--c);color:#111}
   .bar input[type=range]{display:none;flex:1;accent-color:var(--c);min-width:0}
   .cell.showvol .bar input[type=range]{display:block}
-  .bar .vol{min-width:52px;font-variant-numeric:tabular-nums}
+  .bar .vol{min-width:46px;font-variant-numeric:tabular-nums}
   .cell.showvol .bar .vol{background:var(--c);border-color:var(--c);color:#111}
   .bar .solo{margin-left:auto}
   .cell.showvol .bar .solo{margin-left:0}
   .muted .bar input[type=range]{opacity:.35}
+  #pipSheet{position:fixed;inset:0;z-index:10;background:rgba(0,0,0,.55);display:flex;align-items:flex-end}
+  .sheet{width:100%;background:var(--panel);border-radius:14px 14px 0 0;display:grid;gap:8px;
+    padding:14px 12px calc(14px + env(safe-area-inset-bottom,0px))}
+  .sheet p{margin:0;font-size:14px}
+  #pipList{display:grid;gap:8px}
+  #pipList button{padding:12px;font-weight:700;text-align:left;background:var(--c);border-color:var(--c);
+    color:#16181f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   [hidden]{display:none!important}
 </style>
 </head>
 <body>
 <header>
   <h1>マルチ配信ビューア</h1>
-  <button id="playAll" hidden>▶ 全部再生</button>
-  <button id="pauseAll" hidden>⏸ 全部停止</button>
+  <button id="playAll" hidden>▶ 全部</button>
+  <button id="pauseAll" hidden>⏸ 全部</button>
+  <button id="pip" hidden>PiP</button>
   <button id="wake" title="再生中に画面が消えないようにする">画面ON</button>
   <button id="fs">全画面</button>
-  <button id="toggleSetup" hidden>URL設定</button>
+  <button id="toggleSetup" hidden>URL</button>
 </header>
 
 <section id="setup">
@@ -90,6 +101,15 @@
 </section>
 
 <main id="grid" data-n="0"></main>
+
+<div id="pipSheet" hidden>
+  <div class="sheet">
+    <p>小窓で見る配信を選んでください</p>
+    <div id="pipList"></div>
+    <p class="hint">選んだ配信が全画面になります。そのままホームに戻ると小窓（PiP）になります。</p>
+    <button id="pipCancel">キャンセル</button>
+  </div>
+</div>
 
 <script>
 const COLORS = ['var(--c1)','var(--c2)','var(--c3)'];
@@ -196,7 +216,8 @@ async function start(){
   });
 
   $('setup').hidden = true;
-  ['playAll','pauseAll','toggleSetup'].forEach(id => $(id).hidden = false);
+  ['playAll','pauseAll','pip','toggleSetup'].forEach(id => $(id).hidden = false);
+  document.body.classList.add('viewing');
 }
 
 function setMuted(p, m){
@@ -224,6 +245,34 @@ $('fs').onclick = async () => {
     else await document.documentElement.requestFullscreen();
   }catch(e){}
 };
+
+// PiP：選んだ配信を全画面にする（ホームに戻ると Chrome が小窓にする）
+$('pip').onclick = () => {
+  const list = $('pipList'); list.innerHTML = '';
+  players.forEach(p => {
+    const b = document.createElement('button');
+    b.style.setProperty('--c', COLORS[p.slot]);
+    let t = ''; try{ t = p.player.getVideoData().title || ''; }catch(e){}
+    b.textContent = `配信${p.slot+1}` + (t ? `：${t}` : '');
+    b.onclick = () => pipTo(p);
+    list.appendChild(b);
+  });
+  $('pipSheet').hidden = false;
+};
+$('pipCancel').onclick = () => { $('pipSheet').hidden = true; };
+$('pipSheet').onclick = e => { if(e.target.id === 'pipSheet') $('pipSheet').hidden = true; };
+
+function pipTo(p){
+  const f = p.player.getIframe();
+  const req = f.requestFullscreen ? f.requestFullscreen() : Promise.reject();
+  $('pipSheet').hidden = true;
+  setMuted(p, false); soloIdx = -1; syncUi();
+  req.then(() => { try{ screen.orientation.lock('landscape').catch(()=>{}); }catch(e){} })
+     .catch(() => alert('全画面にできませんでした。プレーヤー右下の全画面ボタンをお試しください。'));
+}
+document.addEventListener('fullscreenchange', () => {
+  if(!document.fullscreenElement){ try{ screen.orientation.unlock(); }catch(e){} }
+});
 
 // 画面ON維持（Wake Lock）
 let lock = null, wantLock = false;
