@@ -33,7 +33,7 @@
   body.viewing header button{flex:1;padding:5px 2px}
 
   #setup{padding:4px 8px 10px;display:grid;gap:8px}
-  .urlrow{display:grid;grid-template-columns:10px 1fr;gap:8px;align-items:stretch;
+  .urlrow{display:grid;grid-template-columns:10px 1fr auto;gap:8px;align-items:stretch;
     position:relative;transition:transform .15s}
   .urlrow.dragging{transition:none;z-index:2}
   .urlrow.dragging input{border-color:var(--blue)}
@@ -45,6 +45,11 @@
   .urlrow.dragging .grip{cursor:grabbing}
   #setup input{width:100%;padding:10px;border-radius:10px;border:1px solid var(--line);
     background:#0d0e13;color:var(--text);font-size:14px}
+  .urlrow .del{padding:0 10px;color:var(--sub);border-radius:10px;line-height:1}
+  .urlrow .del:hover{color:var(--text);border-color:var(--pink)}
+  #addRow{width:100%;padding:9px;border-style:dashed;color:var(--sub)}
+  #addRow:not(:disabled):hover{color:var(--text);border-color:var(--c1)}
+  #addRow:disabled{opacity:.4;cursor:default}
   #setup .row{display:flex;gap:8px}
   #setup .row button{flex:1;padding:10px}
   #start{background:var(--c1);color:#16181f;border-color:var(--c1);font-weight:700}
@@ -94,18 +99,15 @@
 </header>
 
 <section id="setup">
-  <div id="urlRows" style="display:grid;gap:8px">
-    <div class="urlrow" style="--c:var(--c1)"><span class="grip" aria-hidden="true"></span><input id="u0" inputmode="url" aria-label="配信1のURL" placeholder="配信1のURL（youtube.com/live/… など）"></div>
-    <div class="urlrow" style="--c:var(--c2)"><span class="grip" aria-hidden="true"></span><input id="u1" inputmode="url" aria-label="配信2のURL" placeholder="配信2のURL"></div>
-    <div class="urlrow" style="--c:var(--c3)"><span class="grip" aria-hidden="true"></span><input id="u2" inputmode="url" aria-label="配信3のURL" placeholder="配信3のURL（空欄なら2画面）"></div>
-    <div class="urlrow" style="--c:var(--c4)"><span class="grip" aria-hidden="true"></span><input id="u3" inputmode="url" aria-label="配信4のURL" placeholder="配信4のURL（空欄なら3画面）"></div>
-  </div>
+  <div id="urlRows" style="display:grid;gap:8px"></div>
+  <button id="addRow" type="button">＋ 配信を追加</button>
   <div class="row">
     <button id="clear">入力をクリア</button>
     <button id="start">視聴を開始</button>
   </div>
   <p id="msg"></p>
-  <p class="hint">左端の色の部分をドラッグすると、表示順を並び替えられます（上から順に表示）。<br>
+  <p class="hint">「＋ 配信を追加」で欄を増やせます（最大4つ）。×で欄を減らせます。<br>
+  左端の色の部分をドラッグすると、表示順を並び替えられます（上から順に表示）。<br>
   配信ページのURLをそのまま貼り付けてください。チャンネルページのURLでは開けません。<br>
   音が出ない配信は、下のバーの🔇をタップすると鳴ります。</p>
 </section>
@@ -115,7 +117,7 @@
 
 <script>
 const COLORS = ['var(--c1)','var(--c2)','var(--c3)','var(--c4)'];
-const SLOTS = [0,1,2,3];
+const MAX = 4;   // PiPの縦横比 16:(9×本数) が下限0.418を下回らない上限
 const $ = id => document.getElementById(id);
 const store = {
   get(k, d){ try{ const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); }catch(e){ return d; } },
@@ -123,13 +125,78 @@ const store = {
 };
 
 let players = [];
-let vols = store.get('mv_vols', [80,80,80,80]);
-// 3画面版で保存された値が残っている場合に4枠ぶんへ補う
-while(vols.length < SLOTS.length) vols.push(80);
+let vols = store.get('mv_vols', []);
+if(!Array.isArray(vols)) vols = [];
+while(vols.length < MAX) vols.push(80);
 let soloIdx = -1;
 
-// 保存済みURLを復元
-store.get('mv_urls', ['','','','']).forEach((u,i)=>{ const el = $('u'+i); if(el) el.value = u || ''; });
+// 保存済みURLを復元する。末尾の空欄は捨てて、実際に使っていた本数だけ並べる
+let urls = store.get('mv_urls', ['']);
+if(!Array.isArray(urls)) urls = [''];
+urls = urls.slice(0, MAX).map(u => u || '');
+while(urls.length > 1 && !urls[urls.length-1]) urls.pop();
+if(!urls.length) urls = [''];
+
+// 画面上の入力値を urls に取り込む
+function readInputs(){
+  urls = urls.map((u,i)=>{ const el = $('u'+i); return el ? el.value : u; });
+}
+function saveUrls(){ store.set('mv_urls', urls); }
+
+function renderRows(){
+  const wrap = $('urlRows');
+  wrap.textContent = '';
+  urls.forEach((val, i) => {
+    const row = document.createElement('div');
+    row.className = 'urlrow';
+    row.style.setProperty('--c', COLORS[i]);
+
+    const grip = document.createElement('span');
+    grip.className = 'grip';
+    grip.setAttribute('aria-hidden','true');
+
+    const input = document.createElement('input');
+    input.id = 'u' + i;
+    input.inputMode = 'url';
+    input.setAttribute('aria-label', `配信${i+1}のURL`);
+    input.placeholder = i === 0 ? '配信1のURL（youtube.com/live/… など）' : `配信${i+1}のURL`;
+    input.value = val || '';
+    input.addEventListener('change', () => { readInputs(); saveUrls(); });
+
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'del';
+    del.textContent = '×';
+    del.setAttribute('aria-label', `配信${i+1}の欄を削除`);
+    del.hidden = urls.length <= 1;   // 最低1欄は残す
+    del.onclick = () => removeRow(i);
+
+    row.append(grip, input, del);
+    wrap.appendChild(row);
+  });
+  $('addRow').disabled = urls.length >= MAX;
+  bindDrag();
+}
+
+function addRow(){
+  if(urls.length >= MAX) return;
+  readInputs();
+  urls.push('');
+  renderRows();
+  saveUrls();
+  $('u' + (urls.length - 1)).focus();
+}
+
+function removeRow(i){
+  if(urls.length <= 1) return;
+  readInputs();
+  urls.splice(i, 1);
+  // 音量も同じ位置を抜いて、末尾を既定値で補う
+  vols.splice(i, 1); vols.push(80);
+  renderRows();
+  saveUrls();
+  store.set('mv_vols', vols);
+}
 
 function parseId(s){
   s = (s||'').trim();
@@ -162,7 +229,8 @@ function loadApi(){
 
 async function start(){
   $('msg').style.color = '';
-  const raw = SLOTS.map(i => $('u'+i).value.trim());
+  readInputs();
+  const raw = urls.map(u => (u || '').trim());
   const bad = raw.map((r,i)=> r && !parseId(r) ? (i+1) : null).filter(Boolean);
   const items = raw.map((r,i)=>({slot:i, id:parseId(r)})).filter(x=>x.id);
   if(bad.length){ $('msg').textContent = `配信${bad.join('・')}のURLを読み取れません。配信ページのURLを貼り付けてください。`; return; }
@@ -242,7 +310,8 @@ function syncUi(){
 }
 
 $('start').onclick = start;
-$('clear').onclick = () => { SLOTS.forEach(i => $('u'+i).value=''); store.set('mv_urls', SLOTS.map(()=>'')); };
+$('addRow').onclick = addRow;
+$('clear').onclick = () => { urls = urls.map(()=>''); renderRows(); saveUrls(); };
 $('toggleSetup').onclick = () => { $('setup').hidden = !$('setup').hidden; };
 $('playAll').onclick = () => players.forEach(p => { try{ if(!p.muted) p.player.unMute(); p.player.playVideo(); }catch(e){} });
 $('pauseAll').onclick = () => players.forEach(p => { try{ p.player.pauseVideo(); }catch(e){} });
@@ -254,8 +323,8 @@ $('fs').onclick = async () => {
   }catch(e){}
 };
 
-// URL欄の並び替え（左端の色の部分をドラッグ）
-(() => {
+// URL欄の並び替え（左端の色の部分をドラッグ）。欄を作り直すたびに張り直す
+function bindDrag(){
   const rows = [...document.querySelectorAll('.urlrow')];
   const GAP = 8;
   let drag = null;
@@ -289,18 +358,24 @@ $('fs').onclick = async () => {
       rows.forEach(r => { r.style.transform = ''; r.classList.remove('dragging'); });
       if(from === to) return;
       // 入力値と音量を新しい順番に入れ替える（色は位置で固定）
-      const order = SLOTS.slice(); order.splice(to, 0, order.splice(from, 1)[0]);
-      const urls = SLOTS.map(i => $('u'+i).value);
-      order.forEach((src, pos) => { $('u'+pos).value = urls[src]; });
-      vols = order.map(src => vols[src]);
-      store.set('mv_urls', SLOTS.map(i => $('u'+i).value));
+      readInputs();
+      const order = urls.map((_,i)=>i); order.splice(to, 0, order.splice(from, 1)[0]);
+      urls = order.map(src => urls[src]);
+      vols = order.map(src => vols[src]).concat(vols.slice(order.length));
+      renderRows();
+      saveUrls();
       store.set('mv_vols', vols);
-      if(document.body.classList.contains('viewing')) $('msg').style.color = 'var(--blue)'; $('msg').textContent = '並び替えました。「視聴を開始」で反映されます。';
+      if(document.body.classList.contains('viewing')){
+        $('msg').style.color = 'var(--blue)';
+        $('msg').textContent = '並び替えました。「視聴を開始」で反映されます。';
+      }
     };
     grip.addEventListener('pointerup', end);
     grip.addEventListener('pointercancel', end);
   });
-})();
+}
+
+renderRows();
 
 // 画面ON維持（Wake Lock）
 let lock = null, wantLock = false;
