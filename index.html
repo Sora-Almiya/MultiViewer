@@ -13,7 +13,7 @@
 <style>
   :root{
     --bg:#16181f; --panel:#20232d; --line:#323644; --text:#e9eaf0; --sub:#8d91a3;
-    --c1:#A58CDC; --c2:#6EB487; --c3:#DCFF50;
+    --c1:#A58CDC; --c2:#6EB487; --c3:#DCFF50; --c4:#64C8F0;
     --blue:#64C8F0; --pink:#FF8C9B; --yellow:#FAC31E;
   }
   *{box-sizing:border-box}
@@ -55,9 +55,11 @@
   #grid[data-n="1"]{grid-template-rows:1fr}
   #grid[data-n="2"]{grid-template-rows:repeat(2,1fr)}
   #grid[data-n="3"]{grid-template-rows:repeat(3,1fr)}
+  #grid[data-n="4"]{grid-template-rows:repeat(4,1fr)}
   @media (orientation:landscape){
     #grid[data-n="2"]{grid-template-columns:repeat(2,1fr);grid-template-rows:1fr}
     #grid[data-n="3"]{grid-template-columns:repeat(3,1fr);grid-template-rows:1fr}
+    #grid[data-n="4"]{grid-template-columns:repeat(2,1fr);grid-template-rows:repeat(2,1fr)}
   }
   .cell{display:flex;flex-direction:column;min-height:0;background:#000;border-radius:6px;
     overflow:hidden;border-top:2px solid var(--c)}
@@ -96,6 +98,7 @@
     <div class="urlrow" style="--c:var(--c1)"><span class="grip" aria-hidden="true"></span><input id="u0" inputmode="url" aria-label="配信1のURL" placeholder="配信1のURL（youtube.com/live/… など）"></div>
     <div class="urlrow" style="--c:var(--c2)"><span class="grip" aria-hidden="true"></span><input id="u1" inputmode="url" aria-label="配信2のURL" placeholder="配信2のURL"></div>
     <div class="urlrow" style="--c:var(--c3)"><span class="grip" aria-hidden="true"></span><input id="u2" inputmode="url" aria-label="配信3のURL" placeholder="配信3のURL（空欄なら2画面）"></div>
+    <div class="urlrow" style="--c:var(--c4)"><span class="grip" aria-hidden="true"></span><input id="u3" inputmode="url" aria-label="配信4のURL" placeholder="配信4のURL（空欄なら3画面）"></div>
   </div>
   <div class="row">
     <button id="clear">入力をクリア</button>
@@ -111,7 +114,8 @@
 
 
 <script>
-const COLORS = ['var(--c1)','var(--c2)','var(--c3)'];
+const COLORS = ['var(--c1)','var(--c2)','var(--c3)','var(--c4)'];
+const SLOTS = [0,1,2,3];
 const $ = id => document.getElementById(id);
 const store = {
   get(k, d){ try{ const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); }catch(e){ return d; } },
@@ -119,11 +123,13 @@ const store = {
 };
 
 let players = [];
-let vols = store.get('mv_vols', [80,80,80]);
+let vols = store.get('mv_vols', [80,80,80,80]);
+// 3画面版で保存された値が残っている場合に4枠ぶんへ補う
+while(vols.length < SLOTS.length) vols.push(80);
 let soloIdx = -1;
 
 // 保存済みURLを復元
-store.get('mv_urls', ['','','']).forEach((u,i)=>{ $('u'+i).value = u || ''; });
+store.get('mv_urls', ['','','','']).forEach((u,i)=>{ const el = $('u'+i); if(el) el.value = u || ''; });
 
 function parseId(s){
   s = (s||'').trim();
@@ -156,7 +162,7 @@ function loadApi(){
 
 async function start(){
   $('msg').style.color = '';
-  const raw = [0,1,2].map(i => $('u'+i).value.trim());
+  const raw = SLOTS.map(i => $('u'+i).value.trim());
   const bad = raw.map((r,i)=> r && !parseId(r) ? (i+1) : null).filter(Boolean);
   const items = raw.map((r,i)=>({slot:i, id:parseId(r)})).filter(x=>x.id);
   if(bad.length){ $('msg').textContent = `配信${bad.join('・')}のURLを読み取れません。配信ページのURLを貼り付けてください。`; return; }
@@ -236,7 +242,7 @@ function syncUi(){
 }
 
 $('start').onclick = start;
-$('clear').onclick = () => { [0,1,2].forEach(i => $('u'+i).value=''); store.set('mv_urls',['','','']); };
+$('clear').onclick = () => { SLOTS.forEach(i => $('u'+i).value=''); store.set('mv_urls', SLOTS.map(()=>'')); };
 $('toggleSetup').onclick = () => { $('setup').hidden = !$('setup').hidden; };
 $('playAll').onclick = () => players.forEach(p => { try{ if(!p.muted) p.player.unMute(); p.player.playVideo(); }catch(e){} });
 $('pauseAll').onclick = () => players.forEach(p => { try{ p.player.pauseVideo(); }catch(e){} });
@@ -283,11 +289,11 @@ $('fs').onclick = async () => {
       rows.forEach(r => { r.style.transform = ''; r.classList.remove('dragging'); });
       if(from === to) return;
       // 入力値と音量を新しい順番に入れ替える（色は位置で固定）
-      const order = [0,1,2]; order.splice(to, 0, order.splice(from, 1)[0]);
-      const urls = [0,1,2].map(i => $('u'+i).value);
+      const order = SLOTS.slice(); order.splice(to, 0, order.splice(from, 1)[0]);
+      const urls = SLOTS.map(i => $('u'+i).value);
       order.forEach((src, pos) => { $('u'+pos).value = urls[src]; });
       vols = order.map(src => vols[src]);
-      store.set('mv_urls', [0,1,2].map(i => $('u'+i).value));
+      store.set('mv_urls', SLOTS.map(i => $('u'+i).value));
       store.set('mv_vols', vols);
       if(document.body.classList.contains('viewing')) $('msg').style.color = 'var(--blue)'; $('msg').textContent = '並び替えました。「視聴を開始」で反映されます。';
     };
