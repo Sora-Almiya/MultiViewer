@@ -1,2 +1,2 @@
 # MultiViewer
-nothing
+じぶん用
