@@ -19,7 +19,7 @@
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
     font-family:"Zen Kaku Gothic New",system-ui,"Noto Sans JP",sans-serif}
-  body{display:flex;flex-direction:column;
+  body{display:flex;flex-direction:column;position:relative;
     padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
   button{font:inherit;font-size:13px;color:var(--text);background:var(--panel);
     border:1px solid var(--line);border-radius:10px;padding:7px 11px;cursor:pointer}
@@ -57,15 +57,7 @@
   .hint{color:var(--sub);font-size:12px;margin:0;line-height:1.6}
 
   #grid{flex:1;min-height:0;display:grid;gap:3px;padding:0 3px 3px;grid-template-columns:1fr}
-  #grid[data-n="1"]{grid-template-rows:1fr}
-  #grid[data-n="2"]{grid-template-rows:repeat(2,1fr)}
-  #grid[data-n="3"]{grid-template-rows:repeat(3,1fr)}
-  #grid[data-n="4"]{grid-template-rows:repeat(4,1fr)}
-  @media (orientation:landscape){
-    #grid[data-n="2"]{grid-template-columns:repeat(2,1fr);grid-template-rows:1fr}
-    #grid[data-n="3"]{grid-template-columns:repeat(3,1fr);grid-template-rows:1fr}
-    #grid[data-n="4"]{grid-template-columns:repeat(2,1fr);grid-template-rows:repeat(2,1fr)}
-  }
+  /* 行列数は JS の layoutGrid() がウインドウ形状から決める */
   .cell{display:flex;flex-direction:column;min-height:0;background:#000;border-radius:6px;
     overflow:hidden;border-top:2px solid var(--c)}
   .vid{flex:1;position:relative;min-height:0}
@@ -85,6 +77,24 @@
   body.pip header, body.pip #setup, body.pip .bar{display:none!important}
   body.pip #grid{gap:0;padding:0}
   body.pip .cell{border-radius:0;border-top-width:0}
+
+  /* 視聴中は上下のメニューを映像に重ねる。場所を取らないぶん映像が大きくなる */
+  body.viewing header{position:absolute;top:0;left:0;right:0;z-index:3;padding:4px;
+    background:linear-gradient(rgba(22,24,31,.85),rgba(22,24,31,0));transition:opacity .25s}
+  body.viewing header button{font-size:11px;padding:4px 2px;border-radius:7px}
+  body.viewing #setup{margin-top:40px}
+  body.viewing .cell{position:relative}
+  body.viewing .vid{position:absolute;inset:0;flex:none}
+  body.viewing .bar{position:absolute;left:0;right:0;bottom:0;z-index:2;padding:2px;gap:3px;
+    background:rgba(32,35,45,.82);transition:opacity .25s}
+  body.viewing .bar button{font-size:11px;padding:1px 6px}
+  body.viewing .bar .vol{min-width:42px}
+  /* 無操作で消す */
+  body.chrome-hidden header,body.chrome-hidden .bar{opacity:0;pointer-events:none}
+  /* 消えている間だけ透明な層を被せ、最初のタップで戻す（映像はiframeなのでタップが届かないため） */
+  #tapcatch{position:fixed;inset:0;z-index:4;display:none}
+  body.chrome-hidden #tapcatch{display:block}
+  body.pip #tapcatch{display:none}
   [hidden]{display:none!important}
 </style>
 </head>
@@ -113,6 +123,7 @@
 </section>
 
 <main id="grid" data-n="0"></main>
+<div id="tapcatch"></div>
 
 
 <script>
@@ -292,8 +303,18 @@ async function start(){
   $('setup').hidden = true;
   ['playAll','pauseAll','toggleSetup'].forEach(id => $(id).hidden = false);
   document.body.classList.add('viewing');
-  // Kotlin版アプリに配信数を伝える（Web版では何もしない）
-  try{ if(window.Android) Android.setCount(items.length); }catch(e){}
+  // 小窓(PiP)での並べ方をアプリに伝える。PiPが許す縦横比(約0.42〜2.39)に収まる組み合わせだけを使う
+  const PIP_LAYOUT = {1:[1,1], 2:[1,2], 3:[1,3], 4:[2,2]};
+  const pl = PIP_LAYOUT[items.length] || [1, items.length];
+  try{
+    if(window.Android){
+      if(typeof Android.setAspect === 'function') Android.setAspect(pl[0] * 16, pl[1] * 9);
+      else if(typeof Android.setCount === 'function') Android.setCount(items.length);
+    }
+  }catch(e){}
+  lastLayout = "";   // 組み直した直後は必ず再計算する
+  layoutGrid();
+  showChrome();
 }
 
 function setMuted(p, m){
@@ -376,6 +397,61 @@ function bindDrag(){
 }
 
 renderRows();
+
+// ウインドウの形から、動画が最も大きく見える行列数を選ぶ
+function bestLayout(n, w, h, gap){
+  let best = null;
+  for(let cols = 1; cols <= n; cols++){
+    const rows = Math.ceil(n / cols);
+    const cw = (w - gap * (cols - 1)) / cols;
+    const ch = (h - gap * (rows - 1)) / rows;
+    if(cw <= 0 || ch <= 0) continue;
+    // セルに16:9を収めたときの幅。幅が大きいほど面積も大きい
+    const vw = Math.min(cw, ch * 16 / 9);
+    if(!best || vw > best.vw) best = {cols, rows, vw};
+  }
+  return best || {cols:1, rows:n};
+}
+
+let lastLayout = '';
+function layoutGrid(){
+  const grid = $('grid');
+  const n = grid.children.length;
+  if(!n) return;
+  const r = grid.getBoundingClientRect();
+  if(!r.width || !r.height) return;
+  const gap = parseFloat(getComputedStyle(grid).rowGap) || 0;
+  const b = bestLayout(n, r.width, r.height, gap);
+  const key = n + ':' + b.cols + 'x' + b.rows;
+  if(key === lastLayout) return;   // 同じ配置なら触らない
+  lastLayout = key;
+  grid.style.gridTemplateColumns = `repeat(${b.cols},1fr)`;
+  grid.style.gridTemplateRows = `repeat(${b.rows},1fr)`;
+  // 余りが出る並べ方（3本を2x2など）では最後の1本を横に広げて隙間を作らない
+  const leftover = b.cols * b.rows - n;
+  [...grid.children].forEach((c, i) => {
+    c.style.gridColumn = (leftover > 0 && i === n - 1) ? `span ${leftover + 1}` : '';
+  });
+}
+addEventListener('resize', layoutGrid);
+addEventListener('orientationchange', layoutGrid);
+
+// 無操作で上下のメニューを隠す
+const CHROME_DELAY = 3000;
+let chromeTimer = null;
+function showChrome(){
+  document.body.classList.remove('chrome-hidden');
+  clearTimeout(chromeTimer);
+  chromeTimer = setTimeout(() => {
+    // 設定を開いている間と、視聴前は消さない
+    if(document.body.classList.contains('viewing') && $('setup').hidden){
+      document.body.classList.add('chrome-hidden');
+    }
+  }, CHROME_DELAY);
+}
+['pointerdown','pointermove','keydown','wheel'].forEach(ev =>
+  addEventListener(ev, showChrome, {passive:true}));
+if(window.ResizeObserver) new ResizeObserver(layoutGrid).observe($('grid'));
 
 // 画面ON維持（Wake Lock）
 let lock = null, wantLock = false;
