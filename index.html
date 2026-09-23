@@ -25,6 +25,7 @@
     border:1px solid var(--line);border-radius:10px;padding:7px 11px;cursor:pointer}
   button:focus-visible,input:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
   button.on{background:var(--yellow);color:#16181f;border-color:var(--yellow)}
+  button.warn{background:var(--pink);color:#16181f;border-color:var(--pink)}
 
   header{display:flex;gap:4px;align-items:center;padding:4px 4px}
   header h1{font-size:15px;margin:0 auto 0 4px;font-weight:700}
@@ -471,6 +472,28 @@ document.addEventListener('visibilitychange', () => {
 
 // アプリ化（PWA）用
 if('serviceWorker' in navigator){ navigator.serviceWorker.register('sw.js').catch(()=>{}); }
+
+// アプリ内で動いているときは「画面ON」をログイン用に置き換える。
+// 画面の常時点灯はアプリ側(FLAG_KEEP_SCREEN_ON)が担当しているのでWeb側の出番がない
+(() => {
+  const api = window.Android;
+  if(!api || typeof api.openLogin !== 'function') return;   // ブラウザではそのまま「画面ON」
+  const btn = $('wake');
+  btn.title = 'YouTubeにログインすると広告なしで再生できます';
+  btn.onclick = () => { try{ api.openLogin(); }catch(e){} };
+  function refresh(){
+    let ok = false;
+    try{ ok = !!api.isSignedIn(); }catch(e){}
+    btn.textContent = ok ? 'ログイン中' : '未ログイン';
+    btn.classList.toggle('warn', !ok);
+    btn.classList.remove('on');
+  }
+  refresh();
+  // ログインから戻ってきたときに反映し直す
+  document.addEventListener('visibilitychange', () => {
+    if(document.visibilityState === 'visible') refresh();
+  });
+})();
 </script>
 </body>
 </html>
