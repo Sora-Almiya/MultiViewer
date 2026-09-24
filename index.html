@@ -279,7 +279,8 @@ async function start(){
       videoId: it.id,
       playerVars: {autoplay:1, playsinline:1, rel:0},
       events: {
-        onReady: e => { e.target.setVolume(vols[it.slot]); e.target.unMute(); e.target.playVideo(); syncUi(); }
+        onReady: e => { e.target.setVolume(vols[it.slot]); e.target.unMute(); e.target.playVideo(); syncUi(); notifyPlaying(); },
+        onStateChange: () => notifyPlaying()
       }
     });
     players.push(entry);
@@ -335,8 +336,8 @@ $('start').onclick = start;
 $('addRow').onclick = addRow;
 $('clear').onclick = () => { urls = urls.map(()=>''); renderRows(); saveUrls(); };
 $('toggleSetup').onclick = () => { $('setup').hidden = !$('setup').hidden; };
-$('playAll').onclick = () => players.forEach(p => { try{ if(!p.muted) p.player.unMute(); p.player.playVideo(); }catch(e){} });
-$('pauseAll').onclick = () => players.forEach(p => { try{ p.player.pauseVideo(); }catch(e){} });
+$('playAll').onclick = () => { players.forEach(p => { try{ if(!p.muted) p.player.unMute(); p.player.playVideo(); }catch(e){} }); notifyPlaying(); };
+$('pauseAll').onclick = () => { players.forEach(p => { try{ p.player.pauseVideo(); }catch(e){} }); notifyPlaying(); };
 
 $('fs').onclick = async () => {
   try{
@@ -400,6 +401,22 @@ function bindDrag(){
 renderRows();
 
 // ウインドウの形から、動画が最も大きく見える行列数を選ぶ
+
+// 再生中かどうかをアプリに伝える。小窓(PiP)へ自動で入るのは再生中だけにしたい
+function notifyPlaying(){
+  let playing = false;
+  if(document.body.classList.contains('viewing')){
+    for(const p of players){
+      try{
+        const s = p.player.getPlayerState();   // 1=再生中, 3=バッファ中
+        if(s === 1 || s === 3){ playing = true; break; }
+      }catch(e){}
+    }
+  }
+  try{
+    if(window.Android && typeof Android.setPlaying === 'function') Android.setPlaying(playing);
+  }catch(e){}
+}
 function bestLayout(n, w, h, gap){
   let best = null;
   for(let cols = 1; cols <= n; cols++){
